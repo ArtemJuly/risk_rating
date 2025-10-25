@@ -1,0 +1,19 @@
+# виртуальное окружение
+.venv/
+
+# системные файлы macOS
+.DS_Store
+
+# артефакты сборки
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# IDE
+.vscode/
+.ipynb_checkpoints/
+
+
