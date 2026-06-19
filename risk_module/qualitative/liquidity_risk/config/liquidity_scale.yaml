@@ -1,0 +1,47 @@
+# Thresholds for mapping liquidity metrics to risk ratings 1–7.
+# For LIX: higher value = more liquid = lower risk. Thresholds are upper bounds per rating.
+# For spread/amihud/roll: lower value = more liquid = lower risk. Thresholds are upper bounds per rating.
+
+lix:
+  # rating assigned when avg LIX >= threshold (descending)
+  thresholds:
+    - {min: 8.0, rating: 1}
+    - {min: 7.0, rating: 2}
+    - {min: 6.0, rating: 3}
+    - {min: 5.0, rating: 4}
+    - {min: 4.0, rating: 5}
+    - {min: 3.0, rating: 6}
+  fallback_rating: 7  # if avg LIX < 3.0
+
+cost_of_liquidity:
+  # average spread %, rating assigned when avg_spread_pct <= threshold (ascending)
+  thresholds:
+    - {max: 0.01,  rating: 1}
+    - {max: 0.05,  rating: 2}
+    - {max: 0.15,  rating: 3}
+    - {max: 0.50,  rating: 4}
+    - {max: 1.00,  rating: 5}
+    - {max: 3.00,  rating: 6}
+  fallback_rating: 7  # if avg_spread_pct > 3.0
+
+amihud:
+  # average amihud ratio, rating assigned when value <= threshold (ascending)
+  thresholds:
+    - {max: 1.0e-10, rating: 1}
+    - {max: 1.0e-9,  rating: 2}
+    - {max: 1.0e-8,  rating: 3}
+    - {max: 1.0e-7,  rating: 4}
+    - {max: 1.0e-6,  rating: 5}
+    - {max: 1.0e-5,  rating: 6}
+  fallback_rating: 7
+
+roll:
+  # Roll spread at lag=1, rating assigned when value <= threshold (ascending)
+  thresholds:
+    - {max: 0.01,  rating: 1}
+    - {max: 0.05,  rating: 2}
+    - {max: 0.10,  rating: 3}
+    - {max: 0.50,  rating: 4}
+    - {max: 1.00,  rating: 5}
+    - {max: 5.00,  rating: 6}
+  fallback_rating: 7

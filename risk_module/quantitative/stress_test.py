@@ -1,12 +1,40 @@
-# risk_module/quantitative/stress_test.py
+from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Any, Iterable, List
+from typing import Dict, Any
 
 import pandas as pd
-import numpy as np
 
-# --- Базовый простой стресс-тест (оставляем, если пригодится) ---
+from risk_module.core.models import Portfolio, ComponentResult
+from risk_module.core.scale import RiskScale
+
+
+# ---------------------------------------------------------------------------
+# Утилита: загрузка ценового ряда из Excel
+# ---------------------------------------------------------------------------
+
+def _load_price_series(filepath: str, column_name: str) -> pd.Series:
+    """
+    Читает Excel с ценами:
+    - первая колонка — даты (индекс)
+    - первая числовая колонка — цены
+    Нормализует даты по полуночи, чистит пробелы и запятые.
+    """
+    df = pd.read_excel(filepath)
+    df.columns = df.columns.astype(str)
+    df[df.columns[0]] = pd.to_datetime(df[df.columns[0]])
+    df.set_index(df.columns[0], inplace=True)
+    df.index = df.index.normalize()
+
+    raw = df.iloc[:, 0].astype(str).str.replace(" ", "").str.replace(",", ".")
+    series = pd.to_numeric(raw, errors="coerce")
+    series.name = column_name
+    return series
+
+
+# ---------------------------------------------------------------------------
+# Простой стресс-тест (утилита, не компонент)
+# ---------------------------------------------------------------------------
 
 @dataclass
 class StressScenario:
@@ -14,30 +42,32 @@ class StressScenario:
     shock_factor: float  # 0.2 = -20%
     meta: Dict[str, Any] | None = None
 
+
 class StressTest:
     """Простой стресс-тест с пропорциональным шоком ко всей стоимости."""
+
     @staticmethod
     def apply_portfolio_shock(portfolio_value: float, shock_factor: float) -> float:
-        stressed_value = portfolio_value * (1 - shock_factor)
-        return max(stressed_value, 0.0)
+        return max(portfolio_value * (1 - shock_factor), 0.0)
 
     @staticmethod
     def run_scenario(portfolio_value: float, scenario: StressScenario) -> Dict[str, Any]:
         stressed = StressTest.apply_portfolio_shock(portfolio_value, scenario.shock_factor)
-        pnl = stressed - portfolio_value
         return {
             "scenario": scenario.name,
             "shock_factor": scenario.shock_factor,
             "initial_value": portfolio_value,
             "stressed_value": stressed,
-            "pnl": pnl,
+            "pnl": stressed - portfolio_value,
             "meta": scenario.meta or {},
         }
 
-# --- Твой LAMA-стресс-тест (модель + прогноз на стресс-период) ---
+
+# ---------------------------------------------------------------------------
+# Модельный стресс-тест — компонент RiskEngine
+# ---------------------------------------------------------------------------
 
 try:
-    # Импорты внутри try: если LAMA не установлена, импорт модуля не «падает».
     from lightautoml.automl.presets.tabular_presets import TabularAutoML
     from lightautoml.tasks import Task
     from sklearn.metrics import mean_absolute_percentage_error
@@ -45,107 +75,125 @@ try:
 except Exception:
     _LAMA_AVAILABLE = False
 
-class StressTestLAMA:
+
+class StressTestLAMAComponent:
     """
-    Модельный стресс-тест:
-    - обучает AutoML прогнозировать доходность фонда по индексам IMOEX/RGBITR на train-периоде
-    - применяет модель на stress-периоде (файлы для IMOEX/RGBITR)
-    - отдает прогноз ряда доходностей фонда и сводные метрики
+    Модельный стресс-тест на базе LightAutoML.
+
+    Логика:
+    1. Обучает AutoML предсказывать дневные доходности фонда
+       по доходностям IMOEX и RGBITR на тренировочном периоде
+       (всё, что раньше stress_start).
+    2. Прогнозирует доходности фонда на стресс-периоде
+       [stress_start, stress_end].
+    3. Считает накопленную доходность → loss_pct → рейтинг 1–7.
+
+    Рыночные данные (IMOEX, RGBITR) — один длинный ряд;
+    граница train/stress задаётся датами, не разными файлами.
     """
+
+    name = "StressTest"
 
     def __init__(
         self,
-        fund_file: str,
         moex_file: str,
         rgbitr_file: str,
-        moex_stress_file: str,
-        rgbitr_stress_file: str,
-    ):
+        stress_start: str,
+        stress_end: str,
+        timeout: int = 300,
+    ) -> None:
         if not _LAMA_AVAILABLE:
             raise ImportError(
                 "lightautoml / scikit-learn не установлены. "
-                "Установи зависимости: pip install lightautoml scikit-learn"
+                "pip install lightautoml scikit-learn"
             )
-        self.fund_file = fund_file
         self.moex_file = moex_file
         self.rgbitr_file = rgbitr_file
-        self.moex_stress_file = moex_stress_file
-        self.rgbitr_stress_file = rgbitr_stress_file
+        self.stress_start = pd.Timestamp(stress_start).normalize()
+        self.stress_end = pd.Timestamp(stress_end).normalize()
+        self.timeout = timeout
 
-        self.model = None
-        self.mape_score = None
-        self.train_data = None
-        self.stress_result = None
+    def calculate(self, portfolio: Portfolio) -> ComponentResult:
+        # --- Загрузка рыночных данных ---
+        moex = _load_price_series(self.moex_file, "IMOEX")
+        rgbitr = _load_price_series(self.rgbitr_file, "RGBITR")
 
-    @staticmethod
-    def preprocess_price_file(filepath: str, column_name: str) -> pd.Series:
-        """
-        Читает Excel с ценами:
-        - первая колонка — даты (становится индексом)
-        - первая числовая колонка — значения цен (поле column_name)
-        - нормализует дату по полуночи, чистит пробелы и запятые
-        """
-        df = pd.read_excel(filepath)
-        df.columns = df.columns.astype(str)
-        df[df.columns[0]] = pd.to_datetime(df[df.columns[0]])
-        df.set_index(df.columns[0], inplace=True)
-        df.index = df.index.normalize()
+        # --- NAV фонда из Portfolio ---
+        fund = portfolio.nav_series.copy()
+        fund.index = pd.DatetimeIndex(fund.index).normalize()
+        fund.name = "Fund"
 
-        raw_series = df.iloc[:, 0].astype(str).str.replace(" ", "").str.replace(",", ".")
-        series = pd.to_numeric(raw_series, errors="coerce")
-        series.name = column_name
-        return series
+        # --- Train: пересечение периода фонда с рыночными данными ---
+        # Фонд не обязан существовать в стресс-периоде — модель обучается
+        # на всей доступной истории фонда и применяется к историческому стрессу.
+        train = (
+            pd.concat([fund, moex, rgbitr], axis=1)
+            .dropna()
+            .pct_change()
+            .dropna()
+        )
 
-    def _load_and_prepare(self):
-        """Готовит train-датасет: Fund, IMOEX, RGBITR → дневные доходности."""
-        fund = self.preprocess_price_file(self.fund_file, "Fund")
-        moex = self.preprocess_price_file(self.moex_file, "IMOEX")
-        rgbitr = self.preprocess_price_file(self.rgbitr_file, "RGBITR")
-        df = pd.concat([fund, moex, rgbitr], axis=1).dropna()
-        self.train_data = df.pct_change().dropna()
+        # --- Stress features: только рынок за стресс-период ---
+        stress_features = (
+            pd.concat([moex, rgbitr], axis=1)
+            .loc[self.stress_start:self.stress_end]
+            .dropna()
+            .pct_change()
+            .dropna()
+        )
 
-    def _load_stress_data(self):
-        """Готовит stress-признаки: IMOEX, RGBITR → доходности."""
-        moex = self.preprocess_price_file(self.moex_stress_file, "IMOEX")
-        rgbitr = self.preprocess_price_file(self.rgbitr_stress_file, "RGBITR")
-        df = pd.concat([moex, rgbitr], axis=1).dropna()
-        return df.pct_change().dropna()
+        if train.empty:
+            raise ValueError(
+                f"[StressTest] Нет тренировочных данных: нет пересечения между "
+                f"nav_series ({portfolio.identifier}) и рыночными файлами."
+            )
+        if stress_features.empty:
+            raise ValueError(
+                f"[StressTest] Нет рыночных данных в стресс-периоде "
+                f"{self.stress_start.date()} – {self.stress_end.date()}."
+            )
 
-    def train_model(self, timeout: int = 300):
-        """Обучает TabularAutoML предсказывать доходность фонда (target='Fund')."""
-        from lightautoml.tasks import Task
-        from lightautoml.automl.presets.tabular_presets import TabularAutoML
-        from sklearn.metrics import mean_absolute_percentage_error
-
-        self._load_and_prepare()
+        # --- Обучение AutoML ---
         task = Task("reg")
         roles = {"target": "Fund"}
-        automl = TabularAutoML(task=task, timeout=timeout, cpu_limit=2, reader_params={"n_jobs": 1})
-        oof_pred = automl.fit_predict(self.train_data, roles=roles)
+        automl = TabularAutoML(
+            task=task,
+            timeout=self.timeout,
+            cpu_limit=2,
+            reader_params={"n_jobs": 1},
+        )
+        oof_pred = automl.fit_predict(train, roles=roles)
+        mape = float(mean_absolute_percentage_error(train["Fund"], oof_pred.data))
 
-        self.model = automl
-        self.mape_score = mean_absolute_percentage_error(self.train_data["Fund"], oof_pred.data)
-        return self.mape_score
+        # --- Прогноз на стресс-периоде ---
+        pred = automl.predict(stress_features)
+        stress_returns = pd.Series(
+            pred.data.ravel(),
+            index=stress_features.index,
+            name="Fund_pred",
+        )
 
-    def predict_stress(self) -> pd.Series:
-        """Стресс-прогноз доходностей фонда на основе стресс-признаков."""
-        if self.model is None:
-            raise RuntimeError("Model is not trained. Call train_model() first.")
-        stress_data = self._load_stress_data()
-        pred = self.model.predict(stress_data)
-        self.stress_result = pd.Series(pred.data.ravel(), index=stress_data.index, name="Fund_pred")
-        return self.stress_result
+        # --- Метрики ---
+        cum_return = float((1 + stress_returns).prod() - 1)
+        cum_prod = (1 + stress_returns).cumprod()
+        max_drawdown = float((cum_prod / cum_prod.cummax() - 1).min())
 
-    def get_summary(self) -> Dict[str, Any]:
-        """Агрегированные метрики по стресс-прогнозу."""
-        if self.stress_result is None:
-            raise RuntimeError("No stress predictions. Call predict_stress() first.")
-        cum_return = (1 + self.stress_result).prod() - 1
-        rolling_max = (1 + self.stress_result).cumprod().cummax()
-        drawdown = (1 + self.stress_result).cumprod() / rolling_max - 1
-        max_drawdown = float(drawdown.min())
-        return {
-            "MAPE (train)": float(self.mape_score) if self.mape_score is not None else None,
-            "Cumulative return (stress)": float(cum_return),
-            "Max drawdown (stress)": max_drawdown,
-        }
+        # Потери — только если накопленная доходность отрицательная
+        loss_pct = abs(min(0.0, cum_return))
+        rating = RiskScale.loss_to_rating(loss_pct)
+
+        return ComponentResult(
+            component=self.name,
+            rating=rating,
+            category="quantitative",
+            loss_pct=loss_pct,
+            meta={
+                "stress_start": str(self.stress_start.date()),
+                "stress_end": str(self.stress_end.date()),
+                "cumulative_return": round(cum_return, 6),
+                "max_drawdown": round(max_drawdown, 6),
+                "mape_train": round(mape, 6),
+                "n_train": len(train),
+                "n_stress": len(stress_returns),
+            },
+        )

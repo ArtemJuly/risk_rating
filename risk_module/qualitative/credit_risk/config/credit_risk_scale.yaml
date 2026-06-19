@@ -1,0 +1,46 @@
+# Справочник СКК ↔ рейтинги агентств и средняя дефолтная частота
+# Проценты переведём в доли уже в коде.
+buckets:
+  - skk: 1
+    avg_def_rate_pct: 0.15
+    agencies:
+      akra: ["AAA", "AA+", "AA"]
+      expert: ["AAA", "AA+", "AA"]
+      nkr: ["AAA", "AA+", "AA"]
+      nra: ["AAA", "AA+"]
+  - skk: 2
+    avg_def_rate_pct: 0.37
+    agencies:
+      akra: ["AA-", "A+", "A"]
+      expert: ["AA-", "A+", "A"]
+      nkr: ["AA-", "A+", "A"]
+      nra: ["AA", "AA-", "A+", "A"]
+  - skk: 3
+    avg_def_rate_pct: 1.16
+    agencies:
+      akra: ["A-", "BBB+", "BBB", "BBB-"]
+      expert: ["A-", "BBB+", "BBB", "BBB-"]
+      nkr: ["A-", "BBB+", "BBB", "BBB-"]
+      nra: ["A-", "BBB+", "BBB", "BBB-"]
+  - skk: 4
+    avg_def_rate_pct: 3.77
+    agencies:
+      akra: ["BB+", "BB", "BB-"]
+      expert: ["BB+", "BB", "BB-"]
+      nkr: ["BB+", "BB", "BB-"]
+      nra: ["BB+", "BB"]
+  - skk: 5
+    avg_def_rate_pct: 11.78
+    agencies:
+      akra: ["B+", "B", "B-"]
+      expert: ["B+", "B", "B-"]
+      nkr: ["B+", "B", "B-"]
+      nra: ["BB-", "B+", "B", "B-"]
+  - skk: 6
+    avg_def_rate_pct: 47.02
+    agencies:
+      akra: ["CCC", "CC"]
+      expert: ["CCC", "CC", "C"]
+      nkr: ["CCC", "CC", "C"]
+      nra: ["CCC", "CC", "C"]
+
