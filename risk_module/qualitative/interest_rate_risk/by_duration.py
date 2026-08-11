@@ -10,6 +10,7 @@ import yaml
 from importlib.resources import files
 
 from risk_module.core.models import Portfolio, ComponentResult
+from risk_module.data.moex_iss import fetch_bond_params
 
 
 # ---------------------------------------------------------------------------
@@ -106,14 +107,9 @@ class InterestRateRiskComponent:
     """
     Процентный риск облигационного портфеля.
 
-    Логика:
-    1. Для каждого холдинга читает дюрацию Маколея из колонки Duration в bonds_db.
-    2. Считает взвешенную среднюю дюрацию портфеля.
-    3. Строит шкалу 1–7 на основе эталонных облигаций из reference_bonds.yaml.
-    4. Возвращает рейтинг.
-
-    Колонка Duration в bonds_db заполняется вручную (дюрация Маколея в годах).
-    Эталонные бумаги и их параметры хранятся в config/reference_bonds.yaml.
+    Дюрация Маколея берётся из MOEX ISS (автоматически).
+    Для бумаг, не найденных на бирже, делается fallback на Excel-базу (db_path).
+    Эталонные бумаги для построения шкалы 1–7 задаются в reference_bonds.yaml.
     """
 
     name = "InterestRateRisk"
@@ -124,11 +120,13 @@ class InterestRateRiskComponent:
         sheet_name: str = "dataBonds",
         config_yaml_path: Optional[str] = None,
         settlement: Optional[datetime.date] = None,
+        use_moex: bool = True,
     ) -> None:
         self.db_path = pathlib.Path(db_path)
         self.sheet_name = sheet_name
         self.reference_bonds = _load_reference_bonds(config_yaml_path)
         self.settlement = settlement or datetime.date.today()
+        self.use_moex = use_moex
 
     def calculate(self, portfolio: Portfolio) -> ComponentResult:
         if not portfolio.holdings:
@@ -139,8 +137,26 @@ class InterestRateRiskComponent:
                 meta={"status": "no_holdings"},
             )
 
-        df = self._load_db()
         edges = _build_rating_edges(self.reference_bonds, self.settlement)
+        isins = [str(h.isin).strip().upper() for h in portfolio.holdings]
+
+        # Шаг 1: Получаем дюрации из MOEX ISS
+        moex_data: pd.DataFrame = pd.DataFrame()
+        if self.use_moex:
+            try:
+                moex_data = fetch_bond_params(isins)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("MOEX ISS недоступен: %s", exc)
+
+        # Шаг 2: Fallback — Excel-база для не найденных в MOEX
+        excel_data: Dict[str, float] = {}
+        moex_not_found = (
+            set(isins) - set(moex_data.index[moex_data["Duration"].notna()])
+            if not moex_data.empty else set(isins)
+        )
+        if moex_not_found and self.db_path.exists():
+            excel_data = self._load_excel_durations(moex_not_found)
 
         weighted_duration = 0.0
         covered_weight = 0.0
@@ -149,36 +165,35 @@ class InterestRateRiskComponent:
 
         for holding in portfolio.holdings:
             isin = str(holding.isin).strip().upper()
-            row = df.loc[df["_ISIN"] == isin]
+            dur: Optional[float] = None
+            source = "unknown"
 
-            if row.empty:
-                not_found.append({"isin": isin, "status": "NOT_FOUND_IN_DB"})
-                continue
+            # Попытка 1: MOEX ISS
+            if not moex_data.empty and isin in moex_data.index:
+                raw = moex_data.loc[isin, "Duration"]
+                if pd.notna(raw):
+                    dur = float(raw)
+                    source = moex_data.loc[isin, "source"]
 
-            raw_dur = row.iloc[0].get("Duration")
-            try:
-                dur = float(raw_dur)
-            except (TypeError, ValueError):
-                not_found.append({"isin": isin, "status": "DURATION_MISSING"})
-                continue
+            # Попытка 2: Excel
+            if dur is None and isin in excel_data:
+                dur = excel_data[isin]
+                source = "excel"
 
-            if np.isnan(dur):
+            if dur is None or np.isnan(dur):
                 not_found.append({"isin": isin, "status": "DURATION_MISSING"})
                 continue
 
             weighted_duration += dur * holding.weight
             covered_weight += holding.weight
-            found.append({"isin": isin, "weight": holding.weight, "duration": dur})
+            found.append({"isin": isin, "weight": holding.weight, "duration": dur, "source": source})
 
         if covered_weight == 0:
             return ComponentResult(
                 component=self.name,
                 rating=1,
                 category="qualitative",
-                meta={
-                    "status": "no_durations_found",
-                    "not_found": not_found,
-                },
+                meta={"status": "no_durations_found", "not_found": not_found},
             )
 
         avg_duration = weighted_duration / covered_weight
@@ -199,16 +214,17 @@ class InterestRateRiskComponent:
             },
         )
 
-    def _load_db(self) -> pd.DataFrame:
-        if not self.db_path.exists():
-            raise FileNotFoundError(f"DB not found: {self.db_path}")
-        df = pd.read_excel(self.db_path, sheet_name=self.sheet_name)
-        if "ISIN" not in df.columns:
-            raise ValueError(f"Колонка ISIN не найдена в листе '{self.sheet_name}'.")
-        if "Duration" not in df.columns:
-            raise ValueError(
-                f"Колонка Duration не найдена в листе '{self.sheet_name}'. "
-                f"Заполни её вручную (дюрация Маколея в годах)."
-            )
+    def _load_excel_durations(self, isins: set[str]) -> Dict[str, float]:
+        try:
+            df = pd.read_excel(self.db_path, sheet_name=self.sheet_name)
+        except Exception:
+            return {}
+        if "ISIN" not in df.columns or "Duration" not in df.columns:
+            return {}
         df["_ISIN"] = df["ISIN"].astype(str).str.strip().str.upper()
-        return df
+        mask = df["_ISIN"].isin(isins)
+        return {
+            row["_ISIN"]: float(row["Duration"])
+            for _, row in df[mask].iterrows()
+            if pd.notna(row.get("Duration"))
+        }
