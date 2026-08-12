@@ -9,60 +9,77 @@ from .models import Portfolio, Holding
 
 class DataLoader:
     """
-    Читает данные продукта из data/products/{isin}.xlsx и собирает Portfolio.
+    Читает данные продукта и собирает Portfolio.
 
-    Ожидаемые листы:
-    - "nav"      — обязательный: колонки Date, NAV
-    - "holdings" — опциональный: колонки ISIN, Weight
+    Источники цен (приоритет по убыванию):
+      1. data/prices/{ISIN}.csv  — автообновление через update_prices.py
+      2. data/products/{ISIN}.xlsx лист "nav" — ручной / исторический
+
+    Холдинги всегда из data/products/{ISIN}.xlsx лист "holdings".
     """
 
     def __init__(self, data_dir: str | pathlib.Path) -> None:
         self.data_dir = pathlib.Path(data_dir)
 
     def load(self, isin: str) -> Portfolio:
-        path = self.data_dir / "products" / f"{isin}.xlsx"
-        if not path.exists():
+        product_path = self.data_dir / "products" / f"{isin}.xlsx"
+        csv_path     = self.data_dir / "prices"   / f"{isin}.csv"
+
+        if not product_path.exists() and not csv_path.exists():
             raise FileNotFoundError(
-                f"Файл продукта не найден: {path}\n"
-                f"Ожидается: data/products/{isin}.xlsx"
+                f"Продукт не найден: нет ни {csv_path.name} ни {product_path.name}"
             )
 
-        xl = pd.ExcelFile(path)
-
-        nav_series = self._load_nav(xl, isin)
-        holdings = self._load_holdings(xl) if "holdings" in xl.sheet_names else []
-
-        return Portfolio(
-            identifier=isin,
-            nav_series=nav_series,
-            holdings=holdings,
+        nav_series = (
+            self._load_nav_csv(csv_path, isin)
+            if csv_path.exists()
+            else self._load_nav_xlsx(product_path, isin)
         )
 
-    def _load_nav(self, xl: pd.ExcelFile, isin: str) -> pd.Series:
+        holdings: list[Holding] = []
+        if product_path.exists():
+            xl = pd.ExcelFile(product_path)
+            if "holdings" in xl.sheet_names:
+                holdings = self._load_holdings(xl)
+
+        return Portfolio(identifier=isin, nav_series=nav_series, holdings=holdings)
+
+    # ── CSV (приоритетный источник) ───────────────────────────────────────────
+
+    def _load_nav_csv(self, path: pathlib.Path, isin: str) -> pd.Series:
+        df = pd.read_csv(path, parse_dates=["date"])
+        df = df.dropna(subset=["date", "close"])
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df = df.dropna(subset=["close"])
+        series = (
+            df.set_index(pd.to_datetime(df["date"]).dt.normalize())["close"]
+            .sort_index()
+            .drop_duplicates()
+        )
+        series.name = isin
+        return series
+
+    # ── xlsx (fallback) ───────────────────────────────────────────────────────
+
+    def _load_nav_xlsx(self, path: pathlib.Path, isin: str) -> pd.Series:
+        if not path.exists():
+            raise FileNotFoundError(f"Файл продукта не найден: {path}")
+        xl = pd.ExcelFile(path)
         if "nav" not in xl.sheet_names:
-            raise ValueError(
-                f"Лист 'nav' не найден в файле продукта {isin}. "
-                f"Доступные листы: {xl.sheet_names}"
-            )
+            raise ValueError(f"Нет листа 'nav' в {path.name}. Листы: {xl.sheet_names}")
         df = xl.parse("nav")
         df.columns = df.columns.astype(str).str.strip()
-
         if "Date" not in df.columns or "NAV" not in df.columns:
-            raise ValueError(
-                f"Лист 'nav' должен содержать колонки Date и NAV. "
-                f"Найдено: {list(df.columns)}"
-            )
+            raise ValueError(f"Нужны колонки Date и NAV. Найдено: {list(df.columns)}")
 
         nav_raw = (
-            df["NAV"]
-            .astype(str)
-            .str.replace(" ", "", regex=False)  # неразрывный пробел
-            .str.replace(" ", "", regex=False)        # обычный пробел (разделитель тысяч)
-            .str.replace(",", ".", regex=False)        # десятичная запятая → точка
+            df["NAV"].astype(str)
+            .str.replace(" ", "", regex=False)
+            .str.replace(" ",      "", regex=False)
+            .str.replace(",",      ".", regex=False)
         )
         df = df.copy()
         df["NAV"] = pd.to_numeric(nav_raw, errors="coerce")
-
         series = (
             df.set_index(pd.to_datetime(df["Date"]))["NAV"]
             .sort_index()
@@ -72,16 +89,13 @@ class DataLoader:
         series.name = isin
         return series
 
+    # ── Holdings ──────────────────────────────────────────────────────────────
+
     def _load_holdings(self, xl: pd.ExcelFile) -> list[Holding]:
         df = xl.parse("holdings")
         df.columns = df.columns.astype(str).str.strip()
-
         if "ISIN" not in df.columns or "Weight" not in df.columns:
-            raise ValueError(
-                f"Лист 'holdings' должен содержать колонки ISIN и Weight. "
-                f"Найдено: {list(df.columns)}"
-            )
-
+            raise ValueError(f"Нужны колонки ISIN и Weight. Найдено: {list(df.columns)}")
         df = df.dropna(subset=["ISIN", "Weight"])
         return [
             Holding(isin=str(row["ISIN"]).strip(), weight=float(row["Weight"]))
