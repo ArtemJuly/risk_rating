@@ -1,3 +1,7 @@
 {$DOMAIN} {
     reverse_proxy app:8501
 }
+
+{$APEX_DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}
