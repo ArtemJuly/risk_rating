@@ -286,9 +286,56 @@ def _compute(isin: str):
     return result, portfolio
 
 
+# Заглушки — заменить на реальные данные при подключении источника
+_PLACEHOLDER: dict[str, dict] = {
+    "RU000A1002D0": {
+        "name":     "Альфа-Банк, БО-06",
+        "issuer":   "АО «Альфа-Банк»",
+        "type":     "Биржевая облигация",
+        "currency": "RUB",
+        "maturity": "2027-04-14",
+        "coupon":   9.40,
+        "yield":    16.8,
+        "description": (
+            "АО «Альфа-Банк» — один из крупнейших частных банков России. "
+            "Входит в состав Альфа-Групп. Рейтинг А+ (АКРА), А+ (Эксперт РА). "
+            "Специализируется на корпоративном и розничном кредитовании."
+        ),
+    },
+    "RU000A1002S8": {
+        "name":     "Газпром капитал, 003Р-02",
+        "issuer":   "ООО «Газпром капитал»",
+        "type":     "Биржевая облигация",
+        "currency": "RUB",
+        "maturity": "2028-11-22",
+        "coupon":   8.50,
+        "yield":    17.2,
+        "description": (
+            "ООО «Газпром капитал» — финансовая «дочка» ПАО «Газпром», "
+            "основной инструмент группы для привлечения рублёвых заимствований. "
+            "Рейтинг ААА (АКРА). Поручительство материнской компании."
+        ),
+    },
+    "RU000A105QR3": {
+        "name":     "РЖД, 001Р-24R",
+        "issuer":   "ОАО «РЖД»",
+        "type":     "Биржевая облигация",
+        "currency": "RUB",
+        "maturity": "2030-06-07",
+        "coupon":   10.85,
+        "yield":    15.9,
+        "description": (
+            "ОАО «Российские железные дороги» — государственная монополия, "
+            "100% принадлежит государству. Рейтинг ААА (АКРА, Эксперт РА). "
+            "Крупнейший нефинансовый эмитент на российском облигационном рынке."
+        ),
+    },
+}
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def _fund_meta(isin: str) -> dict:
-    """Пытаемся получить параметры бумаги из MOEX ISS."""
+    """Параметры бумаги: сначала MOEX ISS, затем заглушка."""
     try:
         r = requests.get(
             f"https://iss.moex.com/iss/securities/{isin}.json",
@@ -296,21 +343,35 @@ def _fund_meta(isin: str) -> dict:
             timeout=8,
         )
         desc = {row[0]: row[2] for row in r.json().get("description", {}).get("data", [])}
-        return {
-            "name":     desc.get("NAME") or isin,
-            "issuer":   desc.get("EMITTER_ID") or "",
-            "maturity": desc.get("MATDATE"),
-            "currency": desc.get("FACEUNIT") or "RUB",
-            "coupon":   desc.get("COUPONVALUE"),
-            "type":     desc.get("TYPENAME") or "",
-        }
+        if desc.get("NAME"):
+            placeholder = _PLACEHOLDER.get(isin, {})
+            return {
+                "name":        desc.get("NAME"),
+                "issuer":      desc.get("EMITENT_TITLE") or placeholder.get("issuer", ""),
+                "maturity":    desc.get("MATDATE"),
+                "currency":    desc.get("FACEUNIT") or "RUB",
+                "coupon":      desc.get("COUPONVALUE"),
+                "type":        desc.get("TYPENAME") or "",
+                "description": placeholder.get("description", ""),
+            }
     except Exception:
-        return {"name": isin, "issuer": "", "maturity": None, "currency": "RUB", "coupon": None, "type": ""}
+        pass
+    # Заглушка
+    p = _PLACEHOLDER.get(isin, {})
+    return {
+        "name":        p.get("name", isin),
+        "issuer":      p.get("issuer", ""),
+        "maturity":    p.get("maturity"),
+        "currency":    p.get("currency", "RUB"),
+        "coupon":      p.get("coupon"),
+        "type":        p.get("type", ""),
+        "description": p.get("description", ""),
+    }
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def _fund_yield(isin: str) -> float | None:
-    """Текущая доходность из рыночных данных MOEX ISS."""
+    """Текущая доходность: MOEX ISS → заглушка."""
     try:
         for board in ["TQCB", "TQOB", "TQOD"]:
             r = requests.get(
@@ -324,7 +385,8 @@ def _fund_yield(isin: str) -> float | None:
                 return float(rows[0][0])
     except Exception:
         pass
-    return None
+    # Заглушка
+    return _PLACEHOLDER.get(isin, {}).get("yield")
 
 
 def _available_isins():
@@ -374,6 +436,16 @@ def _info_panel():
         <div class="rr-scale">{scale_items}</div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def _issuer_block(meta: dict, typ: str) -> str:
+    desc = meta.get("description", "")
+    issuer = meta.get("issuer", "")
+    if desc:
+        label = f"<b>{issuer or typ}</b> · " if (issuer or typ) else ""
+        return f"{label}{desc}"
+    fallback = issuer or typ or "Долговой инструмент"
+    return f"<b>{fallback}</b> · Расчёт по данным MOEX ISS и внутренней базе облигаций."
 
 
 # ── Рендер карточки ────────────────────────────────────────────────────────────
@@ -439,7 +511,7 @@ def _card_html(isin: str, result, meta: dict, yld: float | None) -> str:
         <hr class="card-divider">
         <div class="card-metrics">
             {_render_metric("Ликвидность", liq_r)}
-            {_render_metric("Кредит", credit_r)}
+            {_render_metric("Кред. риск", credit_r)}
             {_render_metric("Рын. риск", market_r)}
         </div>
     </div>
@@ -559,7 +631,7 @@ def show_detail(isin: str):
         <div class="rr-detail-name">{name}</div>
         <div class="rr-detail-isin">{isin}</div>
         <div class="rr-detail-facts">{facts_html}</div>
-        <div class="rr-detail-issuer"><b>{typ}</b> · Расчёт по данным MOEX ISS и внутренней базе облигаций.</div>
+        <div class="rr-detail-issuer">{_issuer_block(meta, typ)}</div>
     </div>
     """, unsafe_allow_html=True)
 
