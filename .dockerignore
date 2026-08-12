@@ -1,0 +1,11 @@
+.venv
+.git
+.claude
+notebooks
+tests
+*.pyc
+__pycache__
+.DS_Store
+risk_module.egg-info
+*.html
+*.png
