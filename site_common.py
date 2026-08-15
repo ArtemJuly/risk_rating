@@ -78,7 +78,6 @@ section[data-testid="stSidebar"] { display: none; }
 
 _NAV_TABS = [
     ("home", "🏠", "Все инструменты", "app.py"),
-    ("risk", "📊", "Риск-рейтинг", "pages/1_Risk_Rating.py"),
     ("kelly", "🎯", "Критерий Келли", "pages/2_Kelly_Criterion.py"),
 ]
 

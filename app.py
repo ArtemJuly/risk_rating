@@ -20,6 +20,7 @@ st.markdown(
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 18px;
         margin-top: 4px;
+        max-width: 360px;
     }
     .product-card {
         background: #FFFFFF;
@@ -41,14 +42,6 @@ st.markdown(
 
     <div class="product-grid">
       <div class="product-card">
-        <div class="product-icon">📊</div>
-        <div class="product-title">Риск-рейтинг фондов</div>
-        <div class="product-desc">
-            Автоматический расчёт риск-рейтинга (1–7) по методике: VaR, стресс-тест,
-            кредитный и процентный риск.
-        </div>
-      </div>
-      <div class="product-card">
         <div class="product-icon">🎯</div>
         <div class="product-title">Критерий Келли</div>
         <div class="product-desc">
@@ -62,8 +55,6 @@ st.markdown(
 )
 
 st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-col1, col2 = st.columns(2, gap="medium")
+col1, _ = st.columns([1, 2], gap="medium")
 with col1:
-    st.page_link("pages/1_Risk_Rating.py", label="Открыть риск-рейтинг →", icon="📊", use_container_width=True)
-with col2:
     st.page_link("pages/2_Kelly_Criterion.py", label="Открыть критерий Келли →", icon="🎯", use_container_width=True)
