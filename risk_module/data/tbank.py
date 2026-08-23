@@ -28,6 +28,15 @@ _REST_BASE = "https://invest-public-api.tbank.ru/rest"
 _TIMEOUT   = 15
 _SLEEP     = 0.3   # пауза между запросами
 
+# Известные фонды: ISIN → (ticker, preferred_class, name)
+# Пополнять по мере добавления новых продуктов
+KNOWN_FUNDS: dict[str, tuple[str, str, str]] = {
+    "RU000A1039N1": ("TBRU", "TQBR", "Российские облигации"),
+    "RU000A108WX3": ("TPAY", "TQTF", "Пассивный доход"),
+    "RU000A10A1L8": ("TOFZ", "TQTF", "Т-Капитал ОФЗ"),
+    "RU000A10B0G9": ("TRND", "TQTF", "Трендовые акции"),
+}
+
 
 def _token() -> str:
     t = os.environ.get("BROKER_TOKEN", "")
