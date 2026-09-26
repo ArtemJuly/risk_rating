@@ -8,11 +8,11 @@ from .models import RiskResult
 # Палитра
 # ---------------------------------------------------------------------------
 
-_BG   = "#0F172A"
-_CARD = "#1E293B"
-_BORDER = "#334155"
-_TEXT = "#F1F5F9"
-_MUTED = "#94A3B8"
+_BG     = "#EBEBED"
+_CARD   = "#FFFFFF"
+_BORDER = "#D0D0D5"
+_TEXT   = "#111111"
+_MUTED  = "#6B7280"
 
 _RATING_COLOR = {
     1: "#22C55E",
@@ -134,7 +134,7 @@ def plot_risk_result(result: RiskResult) -> go.Figure:
         margin=dict(l=20, r=20, t=60, b=20),
         width=980, height=440,
         title=dict(
-            text=(f"<b>Риск-рейтинг</b>"
+            text=(f"<b>Кроко рейтинг</b>"
                   f"  <span style='color:{_MUTED}'>{result.identifier}</span>"),
             font=dict(size=16, color=_TEXT),
             x=0.03, xanchor="left",
@@ -216,7 +216,7 @@ def plot_risk_result(result: RiskResult) -> go.Figure:
     _add_box(fig,
              x_final - FW / 2, yc_final - FH / 2,
              x_final + FW / 2, yc_final + FH / 2,
-             result.final_rating, "Итоговый рейтинг", big=True)
+             result.final_rating, "Кроко рейтинг", big=True)
 
     # -----------------------------------------------------------------------
     # Соединительные линии
@@ -262,7 +262,7 @@ def plot_risk_result(result: RiskResult) -> go.Figure:
                       x1=lx_box + lw_box / 2, y1=yc + lh / 2,
                       fillcolor=c, line=dict(color=c))
         fig.add_annotation(x=lx_box, y=yc, text=str(r),
-                           font=dict(size=11, color=_BG, family="Arial Black"),
+                           font=dict(size=11, color="#FFFFFF", family="Arial Black"),
                            showarrow=False)
 
         # Диапазон потерь

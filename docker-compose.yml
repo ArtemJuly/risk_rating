@@ -20,12 +20,12 @@ services:
       --server.port=8502
       --server.address=0.0.0.0
       --server.headless=true
-    expose:
-      - "8502"
+    ports:
+      - "8502:8502"
     environment:
-      - RISK_PASSWORD=${RISK_PASSWORD:-}
+      - BROKER_TOKEN=${BROKER_TOKEN:-}
     volumes:
-      - ./data:/app/data:ro
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8502/_stcore/health"]
       interval: 30s
