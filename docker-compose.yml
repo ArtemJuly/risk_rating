@@ -4,30 +4,13 @@ services:
     restart: unless-stopped
     expose:
       - "8501"
-    volumes:
-      - ./data:/app/data:ro
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  risk_app:
-    build: .
-    restart: unless-stopped
-    command: >
-      streamlit run risk_app.py
-      --server.port=8502
-      --server.address=0.0.0.0
-      --server.headless=true
-    ports:
-      - "8502:8502"
     environment:
       - BROKER_TOKEN=${BROKER_TOKEN:-}
+      - RISK_PASSWORD=${RISK_PASSWORD:-}
     volumes:
       - ./data:/app/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8502/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -41,14 +24,12 @@ services:
     environment:
       - DOMAIN=${DOMAIN}
       - APEX_DOMAIN=${APEX_DOMAIN}
-      - RISK_DOMAIN=${RISK_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - app
-      - risk_app
 
 volumes:
   caddy_data:

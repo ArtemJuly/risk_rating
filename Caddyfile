@@ -1,13 +1,8 @@
-# Основной сайт (калькуляторы)
+# Основной сайт
 {$DOMAIN} {
     reverse_proxy app:8501
 }
 
 {$APEX_DOMAIN} {
     redir https://{$DOMAIN}{uri} permanent
-}
-
-# Риск-рейтинг
-{$RISK_DOMAIN} {
-    reverse_proxy risk_app:8502
 }
