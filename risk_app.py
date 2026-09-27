@@ -9,6 +9,26 @@ from concurrent.futures import ThreadPoolExecutor
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
+
+def _load_fund_catalog() -> dict[str, dict]:
+    """Единственный источник правды о том, что показывать на сайте.
+
+    data/reference/funds.csv: ISIN,Ticker,Name — добавить/убрать инструмент
+    значит добавить/убрать строку в этом файле, больше нигде трогать не надо.
+    """
+    path = DATA_DIR / "reference" / "funds.csv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, dtype=str).fillna("")
+    return {
+        row["ISIN"].strip(): {"ticker": row["Ticker"].strip(), "name": row["Name"].strip()}
+        for _, row in df.iterrows()
+        if row["ISIN"].strip()
+    }
+
+
+_FUND_CATALOG = _load_fund_catalog()
+
 st.set_page_config(
     page_title="Kroko Capital · Кроко Рейтинг",
     page_icon="🐊",
@@ -635,50 +655,8 @@ def _nav_returns(nav) -> dict:
 
 # Заглушки — заменить на реальные данные при подключении источника
 _PLACEHOLDER: dict[str, dict] = {
-    "RU000A1002D0": {
-        "name":     "Альфа-Банк, БО-06",
-        "issuer":   "АО «Альфа-Банк»",
-        "type":     "Биржевая облигация",
-        "currency": "RUB",
-        "maturity": "2027-04-14",
-        "coupon":   9.40,
-        "yield":    16.8,
-        "description": (
-            "АО «Альфа-Банк» — один из крупнейших частных банков России. "
-            "Входит в состав Альфа-Групп. Рейтинг А+ (АКРА), А+ (Эксперт РА). "
-            "Специализируется на корпоративном и розничном кредитовании."
-        ),
-    },
-    "RU000A1002S8": {
-        "name":     "Газпром капитал, 003Р-02",
-        "issuer":   "ООО «Газпром капитал»",
-        "type":     "Биржевая облигация",
-        "currency": "RUB",
-        "maturity": "2028-11-22",
-        "coupon":   8.50,
-        "yield":    17.2,
-        "description": (
-            "ООО «Газпром капитал» — финансовая «дочка» ПАО «Газпром», "
-            "основной инструмент группы для привлечения рублёвых заимствований. "
-            "Рейтинг ААА (АКРА). Поручительство материнской компании."
-        ),
-    },
-    "RU000A105QR3": {
-        "name":     "РЖД, 001Р-24R",
-        "issuer":   "ОАО «РЖД»",
-        "type":     "Биржевая облигация",
-        "currency": "RUB",
-        "maturity": "2030-06-07",
-        "coupon":   10.85,
-        "yield":    15.9,
-        "description": (
-            "ОАО «Российские железные дороги» — государственная монополия, "
-            "100% принадлежит государству. Рейтинг ААА (АКРА, Эксперт РА). "
-            "Крупнейший нефинансовый эмитент на российском облигационном рынке."
-        ),
-    },
     "RU000A1039N1": {
-        "name":        "Т-Банк Российские облигации (TBRU)",
+        "name":        "Т-Капитал Облигации (TBRU)",
         "issuer":      "Т-Капитал",
         "type":        "БПИФ",
         "currency":    "RUB",
@@ -689,7 +667,7 @@ _PLACEHOLDER: dict[str, dict] = {
         ),
     },
     "RU000A108WX3": {
-        "name":        "Т-Банк Пассивный доход (TPAY)",
+        "name":        "Т-Капитал Пассивный доход (TPAY)",
         "issuer":      "Т-Капитал",
         "type":        "БПИФ",
         "currency":    "RUB",
@@ -711,7 +689,7 @@ _PLACEHOLDER: dict[str, dict] = {
         ),
     },
     "RU000A10B0G9": {
-        "name":        "Т-Банк Трендовые акции (TRND)",
+        "name":        "Т-Капитал Трендовые акции (TRND)",
         "issuer":      "Т-Капитал",
         "type":        "БПИФ",
         "currency":    "RUB",
@@ -719,6 +697,117 @@ _PLACEHOLDER: dict[str, dict] = {
             "БПИФ с фокусом на акции российских компаний с выраженным "
             "восходящим моментумом. Активное управление на основе "
             "трендовой стратегии. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A1011U5": {
+        "name":        "Т-Капитал – Вечный портфель, рубли (TRUR)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ по стратегии «вечного портфеля»: капитал поровну делится "
+            "между акциями, золотом и облигациями (короткими и длинными) "
+            "в рублях. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A1011S9": {
+        "name":        "Т-Капитал – Вечный портфель, доллары (TUSD)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "USD",
+        "description": (
+            "Та же стратегия «вечного портфеля», что и TRUR, но с "
+            "долларовыми инструментами. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A1011T7": {
+        "name":        "Т-Капитал – Вечный портфель, евро (TEUR)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "EUR",
+        "description": (
+            "Та же стратегия «вечного портфеля», что и TRUR, но с "
+            "евровыми инструментами. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A101X50": {
+        "name":        "Т-Капитал Золото (TGLD)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ, отслеживающий стоимость золота через обеспеченные "
+            "золотом финансовые инструменты. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A101X76": {
+        "name":        "Т-Капитал Индекс МосБиржи (TMOS)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ, реплицирующий индекс МосБиржи — широкий рынок "
+            "крупнейших российских компаний. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A107597": {
+        "name":        "Т-Капитал Локальные валютные облигации (TLCB)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ, инвестирующий в локальные валютные (замещающие) "
+            "облигации российских эмитентов. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A106DL2": {
+        "name":        "Т-Капитал Денежный рынок (TMON)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ денежного рынка: краткосрочные сделки обратного репо, "
+            "минимальный риск и волатильность. Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A103TD2": {
+        "name":        "Т-Капитал Облигации Е (TBEU)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "EUR",
+        "description": (
+            "БПИФ, инвестирующий в валютные облигации, номинированные в евро. "
+            "Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A107563": {
+        "name":        "Т-Капитал Дивидендные акции (TDIV)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ из российских акций с высокой дивидендной доходностью. "
+            "Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A108BL2": {
+        "name":        "Т-Капитал Акции роста (TITR)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ из российских акций с потенциалом роста выше рынка. "
+            "Управляющая компания — Т-Капитал."
+        ),
+    },
+    "RU000A10FLY4": {
+        "name":        "Т-Капитал Накопительный (TSAV)",
+        "issuer":      "Т-Капитал",
+        "type":        "БПИФ",
+        "currency":    "RUB",
+        "description": (
+            "БПИФ консервативного накопления — краткосрочные рублёвые "
+            "инструменты денежного рынка. Управляющая компания — Т-Капитал."
         ),
     },
 }
@@ -766,15 +855,16 @@ def _fund_meta(isin: str) -> dict:
     except Exception:
         pass
 
-    # Заглушка
-    p = _PLACEHOLDER.get(isin, {})
+    # Заглушка — в последнюю очередь берём хотя бы имя/тикер из каталога
+    p   = _PLACEHOLDER.get(isin, {})
+    cat = _FUND_CATALOG.get(isin, {})
     return {
-        "name":        p.get("name", isin),
-        "issuer":      p.get("issuer", ""),
+        "name":        p.get("name") or cat.get("name") or isin,
+        "issuer":      p.get("issuer") or ("Т-Капитал" if cat else ""),
         "maturity":    p.get("maturity"),
         "currency":    p.get("currency", "RUB"),
         "coupon":      p.get("coupon"),
-        "type":        p.get("type", ""),
+        "type":        p.get("type") or ("БПИФ" if cat else ""),
         "description": p.get("description", ""),
     }
 
@@ -800,9 +890,8 @@ def _fund_yield(isin: str) -> float | None:
 
 
 def _available_isins():
-    xlsx = {p.stem for p in (DATA_DIR / "products").glob("*.xlsx")}
-    csv  = {p.stem for p in (DATA_DIR / "prices").glob("*.csv")}
-    return sorted(xlsx | csv)
+    """Что на сайте = что в data/reference/funds.csv, и только."""
+    return sorted(_FUND_CATALOG.keys())
 
 
 # ── Файловый кэш рейтингов ────────────────────────────────────────────────────
@@ -1055,7 +1144,7 @@ def _card_html(isin: str, result, meta: dict, nav, rets: dict | None = None) -> 
     <div class="rr-card-metrics">
       <div class="rr-card-met-item">
         <div class="rr-card-met-label">1М доходн.</div>
-        {ret_html(rets["1М"])}
+        {ret_html(rets.get("1М"))}
       </div>
       <div class="rr-card-met-item">
         <div class="rr-card-met-label">VaR</div>
