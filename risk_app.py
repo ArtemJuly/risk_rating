@@ -556,6 +556,7 @@ _RISK_LABEL = {
     4: "Умеренный",   5: "Умеренно высокий", 6: "Высокий", 7: "Максимальный",
 }
 _LOSS_RANGE = {1: "0–5%", 2: "5–10%", 3: "10–20%", 4: "20–30%", 5: "30–50%", 6: "50–70%", 7: ">70%"}
+_LOSS_UPPER = {1: 5, 2: 10, 3: 20, 4: 30, 5: 50, 6: 70, 7: float("inf")}  # верхняя граница диапазона, %
 _COMP_LABEL = {
     "VaR": "VaR",
     "StressTest": "Стресс",
@@ -633,6 +634,65 @@ def _compute(isin: str):
     portfolio = loader.load(isin)
     result = _get_engine().calculate(portfolio)
     return result, portfolio
+
+
+@st.cache_data(show_spinner=False)
+def _backtest_rating(isin: str, months_ago: int = 12) -> dict | None:
+    """
+    «Рейтинг N месяцев назад vs факт»: пересчитывает рейтинг на истории цен,
+    обрезанной на дату N месяцев назад, и сравнивает предсказанный диапазон
+    потерь с тем, что реально произошло с ценой пая дальше.
+
+    Важная оговорка: состав портфеля (holdings) исторически не хранится —
+    для кредитного риска/дюрации используется ТЕКУЩИЙ состав как приближение.
+    VaR и стресс-тест считаются честно, только на цене на тот момент.
+    """
+    from risk_module.core.loader import DataLoader
+    from risk_module.core.models import Portfolio
+
+    loader = DataLoader(DATA_DIR)
+    try:
+        portfolio = loader.load(isin)
+    except Exception:
+        return None
+
+    nav = portfolio.nav_series.sort_index()
+    if nav.empty:
+        return None
+
+    last_date = nav.index.max()
+    cutoff = last_date - pd.DateOffset(months=months_ago)
+
+    hist_nav = nav[nav.index <= cutoff]
+    forward_nav = nav[nav.index > cutoff]
+
+    # Минимум с запасом над требованиями компонент (30 наблюдений) +
+    # достаточно данных после отсечки, чтобы «факт» что-то значил.
+    if len(hist_nav) < 60 or len(forward_nav) < 20:
+        return None
+
+    hist_portfolio = Portfolio(identifier=isin, nav_series=hist_nav, holdings=portfolio.holdings)
+    try:
+        hist_result = _get_engine().calculate(hist_portfolio)
+    except Exception:
+        return None
+
+    # Реализованная просадка от цены на дату отсечки и дальше
+    anchor_price = float(hist_nav.iloc[-1])
+    path = pd.concat([hist_nav.iloc[[-1]], forward_nav])
+    running_max = path.cummax()
+    drawdown = (path - running_max) / running_max
+    realized_dd = float(abs(drawdown.min()) * 100)
+    realized_return = float((forward_nav.iloc[-1] / anchor_price - 1) * 100)
+
+    return {
+        "cutoff_date": cutoff.date().isoformat(),
+        "last_date": last_date.date().isoformat(),
+        "hist_rating": hist_result.final_rating,
+        "realized_dd": realized_dd,
+        "realized_return": realized_return,
+        "within_band": realized_dd <= _LOSS_UPPER.get(hist_result.final_rating, float("inf")),
+    }
 
 
 def _nav_returns(nav) -> dict:
@@ -1403,6 +1463,44 @@ def show_detail(isin: str):
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── Бэктест: рейтинг год назад vs факт ───────────────────────────────────
+    _bt = _backtest_rating(isin, months_ago=12)
+    if _bt is not None:
+        _bt_clr  = _CLR.get(_bt["hist_rating"], "#94A3B8")
+        _bt_ok   = _bt["within_band"]
+        _verdict_clr  = "#16A34A" if _bt_ok else "#DC2626"
+        _verdict_text = "Просадка уложилась в прогноз" if _bt_ok else "Просадка превысила прогноз"
+        _ret = _bt["realized_return"]
+        _ret_clr = "#16A34A" if _ret >= 0 else "#DC2626"
+        _ret_sign = "+" if _ret >= 0 else ""
+
+        st.markdown(f"""
+        <div class="rr-section">Рейтинг год назад vs факт</div>
+        <div class="rr-detail-facts">
+            <div class="detail-fact">
+                <div class="detail-fact-label">Рейтинг на {_bt['cutoff_date']}</div>
+                <div class="detail-fact-value" style="color:{_bt_clr}">{_bt['hist_rating']} — {_LOSS_RANGE.get(_bt['hist_rating'], '')}</div>
+            </div>
+            <div class="detail-fact">
+                <div class="detail-fact-label">Факт. просадка с {_bt['cutoff_date']}</div>
+                <div class="detail-fact-value">{_bt['realized_dd']:.1f}%</div>
+            </div>
+            <div class="detail-fact">
+                <div class="detail-fact-label">Доходность с {_bt['cutoff_date']}</div>
+                <div class="detail-fact-value" style="color:{_ret_clr}">{_ret_sign}{_ret:.1f}%</div>
+            </div>
+            <div class="detail-fact">
+                <div class="detail-fact-label">Итог</div>
+                <div class="detail-fact-value" style="color:{_verdict_clr}">{_verdict_text}</div>
+            </div>
+        </div>
+        <div class="rr-scenario-note" style="margin-top:8px">
+            Рейтинг на {_bt['cutoff_date']} пересчитан честно по истории цены на тот момент.
+            Кредитный риск и дюрация в этом расчёте — по <b>текущему</b> составу портфеля
+            (историю состава мы не храним, это приближение).
+        </div>
+        """, unsafe_allow_html=True)
 
     # ── Сценарный прогноз ─────────────────────────────────────────────────────
     _sc_nav = portfolio.nav_series
